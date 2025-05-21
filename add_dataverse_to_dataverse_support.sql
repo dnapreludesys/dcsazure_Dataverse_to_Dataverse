@@ -52,7 +52,6 @@ INSERT INTO adf_type_mapping(dataset, dataset_type, adf_type)
 ('DATAVERSE', 'Picklist', 'string'),
 ('DATAVERSE', 'MultiSelectPicklist', 'string'),
 ('DATAVERSE', 'Money', 'double'),
-('DATAVERSE', 'Customer', 'string'),
 ('DATAVERSE', 'DateTime', 'timestamp'),
 ('DATAVERSE', 'Decimal', 'double'),
 ('DATAVERSE', 'Integer', 'integer'),
@@ -62,8 +61,5 @@ INSERT INTO adf_type_mapping(dataset, dataset_type, adf_type)
 ('DATAVERSE', 'Image', 'binary'),
 ('DATAVERSE', 'Lookup', 'string'),
 ('DATAVERSE', 'Memo', 'string'),
-('DATAVERSE', 'Owner', 'string'),
-('DATAVERSE', 'State', 'string'),
-('DATAVERSE', 'Status', 'string'),
 ('DATAVERSE', 'Uniqueidentifier', 'string'),
 ('DATAVERSE', 'Boolean', 'boolean');
