@@ -5,7 +5,7 @@ GO
 SET QUOTED_IDENTIFIER ON
 GO
 
-CREATE TABLE [discovered_ruleset_temp](
+CREATE TABLE [discovered_ruleset_D365](
 	[identified_table] [varchar](255) NOT NULL,
 	[identified_column] [varchar](255) NOT NULL,
 	[identified_column_type] [varchar](100) NULL,
@@ -32,6 +32,16 @@ GO
 
 ALTER TABLE [discovered_ruleset_temp] ADD  DEFAULT ((0)) FOR [rows_profiled]
 GO
+
+/* Script to create Remove columns table for D365 pipeline */
+CREATE TABLE [D365_Removed_Columns] (
+    dataset NVARCHAR(100)not null,
+    specified_database NVARCHAR(100)not null,
+    specified_table NVARCHAR(100)not null,
+    columnname NVARCHAR(100)not null,
+    reason_to_remove NVARCHAR(MAX),
+    CONSTRAINT PK_RemovedColumns PRIMARY KEY (dataset, specified_database, specified_table, columnname)
+);
 
 
 /* Script to create data mappings for DATAVERSE dataset */
