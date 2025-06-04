@@ -11,7 +11,6 @@ ALTER TABLE discovered_ruleset ADD  CONSTRAINT DF_discovered_ruleset_is_excluded
 GO
 
 -- Script to create data mappings for DATAVERSE dataset
-
 INSERT INTO adf_type_mapping(dataset, dataset_type, adf_type)
    VALUES
 ('DATAVERSE', 'BigInt', 'long'),
