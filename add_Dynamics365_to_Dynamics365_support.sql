@@ -7,7 +7,7 @@ ALTER TABLE adf_events_log
 ADD event_details NVARCHAR(MAX) NULL;
 
 -- Add a column 'is_excluded' and a default constraint to it in the 'discovered_ruleset' table with default value of 0.
-ALTER TABLE [dbo].[discovered_ruleset]
+ALTER TABLE discovered_ruleset
 ADD [is_excluded] BIT NOT NULL CONSTRAINT [DF_discovered_ruleset_is_excluded] DEFAULT ((0));
 
 -- Script to create data mappings for DATAVERSE dataset
