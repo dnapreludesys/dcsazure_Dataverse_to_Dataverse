@@ -30,8 +30,8 @@ These linked services types are needed for the following steps:
 * Update Discovery State Failed (Stored Procedure Activity)
 * Delete_temp_table_values (Script activity)
 * dcsazure_Dynamics365_to_Dynamics365_discovery_metadata_ds (Azure SQL Dataset)
-* dcsazure_Dynamics365_to_Dynamics365_Fetch_Removed_Columns_df/SQLSink (DataFlow)
-* dcsazure_Dynamics365_to_Dynamics365_Fetch_Removed_Columns_df/Sink (DataFlow)
+* dcsazure_Dynamics365_to_Dynamics365_import_columns_df/SQLSink (DataFlow)
+* dcsazure_Dynamics365_to_Dynamics365_import_columns_df/Sink (DataFlow)
 * dcsazure_Dynamics365_to_Dynamics365_discovery_df/MetadataStoreRead (DataFlow)
 * dcsazure_Dynamics365_to_Dynamics365_discovery_df/WriteToMetadataStore (DataFlow)
 
@@ -40,13 +40,13 @@ These linked services types are needed for the following steps:
 
 `Dataverse REST` (Source) - Linked service associated with Dataverse to fetch the metadata. This will be used for the following steps:
 * dcsazure_Dynamics365_to_Dynamics365_discovery_source_ds (REST Dataset)
-* dcsazure_Dynamics365_to_Dynamics365_Fetch_Removed_Columns_df/Source (DataFlow)
+* dcsazure_Dynamics365_to_Dynamics365_import_columns_df/Source (DataFlow)
 
 ### How It Works
 
 * Check If We Should Rediscover Data
   * If we should, Mark Tables Undiscovered. This is done by updating the metadata store to indicate that tables have not had their sensitive data discovered.
-* Get tables from the source 
+* Get tables from source 
   * Calls the Dataverse EntityDefinitions API to fetch all table names that are:
     * Valid for Advanced Find
     * Customizable
@@ -60,7 +60,7 @@ These linked services types are needed for the following steps:
       * Uses Dataverse API to fetch column metadata (`Attributes`) for the current table  
       * Stores column name, data type, max length, etc., into the discovered_ruleset metadata SQL table
       * Filters the columns that should be excluded (System modified, Readonly, polymorphic, lookup columns) and updates the `is_excluded` field in the discovered_ruleset metadata table
-* Delete_temp_table_values
+* Delete Temporary Table Records
   * Deletes the `TEMPCOLUMN` columns from the discovered_ruleset metadata table column.
 * Select Discovered Tables
   * After persisting the metadata to the metadata store, collect the list of discovered tables
@@ -81,5 +81,4 @@ If you have configured your database using the metadata store scripts, these var
 ### Parameters
 
 * `P_SOURCE_DATABASE` - String - This is the Dynamics365 environment that may contain sensitive data
-* `P_SOURCE_SCHEMA` - String - Logical schema within Dataverse (default `dbo`)
 * `P_REDISCOVER` - This is a Bool that specifies if we should re-execute the data discovery dataflow for previously discovered files that have not had their schema modified (default `true`)

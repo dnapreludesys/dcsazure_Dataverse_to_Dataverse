@@ -12,10 +12,7 @@
         "DCS_D365_LS": {
             "type": "string"
         },
-        "DCS_365_LS_Target": {
-            "type": "string"
-        },
-        "RestService1": {
+        "DCSMaskingLS": {
             "type": "string"
         }
     },
@@ -53,7 +50,7 @@
                             "source": {
                                 "type": "AzureSqlSource",
                                 "sqlReaderQuery": {
-                                    "value": "WITH\ntables_requiring_filters AS\n(\n\tSELECT DISTINCT\n\t\tdataset, specified_database, specified_schema, identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\n\tWHERE ISJSON(assigned_algorithm) = 1\n\tAND dataset = '@{variables('DATASET')}'\n\tAND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND specified_schema = '@{pipeline().parameters.P_SCHEMA}'\n),\ntables_not_requiring_filters AS\n(\n\tSELECT DISTINCT\n\t\tdataset, specified_database, specified_schema, identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\n\tWHERE assigned_algorithm IS NOT NULL\n\tAND assigned_algorithm != ''\n\tAND dataset = '@{variables('DATASET')}'\n\tAND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND specified_schema = '@{pipeline().parameters.P_SCHEMA}'\n\tEXCEPT\n\tSELECT dataset, specified_database, specified_schema, identified_table\n\tFROM tables_requiring_filters\n\tWHERE dataset = '@{variables('DATASET')}'\n\tAND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND specified_schema = '@{pipeline().parameters.P_SCHEMA}'\n),\nall_filters AS\n(\n\tSELECT DISTINCT\n\t\tJSON_VALUE(kc.value, '$.alias') as filter_alias,\n\t\treplace(JSON_VALUE(kc.value, '$.condition'), '@{variables('CONDITIONAL_MASKING_RESERVED_CHARACTER')}', concat('byName(''', d.identified_column, ''') ')) as filter_value,\n\t\td.identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d \n\t\tCROSS APPLY OPENJSON(d.assigned_algorithm) kc\n\tWHERE\n\t\tISJSON(assigned_algorithm,ARRAY) = 1\n\t\tAND\n\t\td.identified_table in (\n\t\t\tSELECT identified_table FROM tables_requiring_filters\n\t\t)\n\t\tAND JSON_VALUE(kc.value,'$.alias') != 'default'\n),\ndefault_filters AS\n(\n\tSELECT DISTINCT\n\t\t'default' as filter_alias,\n\t\tSTRING_AGG(concat('not(', replace(JSON_VALUE(kc.value, '$.condition'), '@{variables('CONDITIONAL_MASKING_RESERVED_CHARACTER')}', concat('byName(''', d.identified_column, ''')')),')'), ' && ') as filter_value,\n\t\td.identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d \n\t\tCROSS APPLY OPENJSON(d.assigned_algorithm) kc\n\tWHERE\n\t\tISJSON(assigned_algorithm,ARRAY) = 1\n\t\tAND\n\t\td.identified_table in (\n\t\t\tSELECT identified_table FROM tables_requiring_filters\n\t\t)\n\t\tAND JSON_VALUE(kc.value,'$.alias') != 'default'\n\tGROUP BY d.identified_table\n),\nsources_and_filters AS (\n\tSELECT\n\t\tt.dataset,\n\t\tt.specified_database,\n\t\tt.specified_schema,\n\t\tt.identified_table,\n\t\tf.filter_alias,\n\t\tf.filter_value\n\tFROM tables_requiring_filters t JOIN default_filters f\n\tON t.identified_table = f.identified_table\n\tUNION\n\tSELECT\n\t\tt.dataset,\n\t\tt.specified_database,\n\t\tt.specified_schema,\n\t\tt.identified_table,\n\t\tf.filter_alias,\n\t\tf.filter_value\n\tFROM tables_requiring_filters t JOIN all_filters f\n\tON t.identified_table = f.identified_table\n\tUNION\n\tSELECT\n\t\tdataset,\n\t\tspecified_database,\n\t\tspecified_schema,\n\t\tidentified_table,\n\t\t'',\n\t\t''\n\tFROM tables_not_requiring_filters\n)\nSELECT DISTINCT\n\tdm.source_dataset,\n\tdm.source_database,\n\tdm.source_schema,\n\tdm.source_table,\n\tdm.sink_dataset,\n\tdm.sink_database,\n\tdm.sink_schema,\n\tdm.sink_table,\n\trs.filter_alias,\n\trs.filter_value\nFROM\n\tsources_and_filters rs\n\tJOIN @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')} dm\n\tON (\n\t\trs.dataset = dm.source_dataset AND\n\t\trs.specified_database = dm.source_database AND\n\t\trs.specified_schema = dm.source_schema AND\n\t\trs.identified_table = dm.source_table\n\t)\nWHERE\n\tdm.sink_database = '@{pipeline().parameters.P_ORG_NAME}' AND\n\tdm.sink_schema = '@{pipeline().parameters.P_SCHEMA}'\n\tAND (dm.mapping_complete IS NULL OR dm.mapping_complete = 0)\n\tAND (ISJSON(dm.masked_status) = 0  OR dm.masked_status IS NULL)\nUNION\nSELECT DISTINCT\n\tdm.source_dataset,\n\tdm.source_database,\n\tdm.source_schema,\n\tdm.source_table,\n\tdm.sink_dataset,\n\tdm.sink_database,\n\tdm.sink_schema,\n\tdm.sink_table,\n\trs.filter_alias,\n\trs.filter_value\nFROM\n\tsources_and_filters rs\n\tJOIN @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')} dm\n\tCROSS APPLY OPENJSON(dm.masked_status) kc\n\tON (\n\t\trs.dataset = dm.source_dataset AND\n\t\trs.specified_database = dm.source_database AND\n\t\trs.specified_schema = dm.source_schema AND\n\t\trs.identified_table = dm.source_table\n\t)\nWHERE\n\tdm.sink_database = '@{pipeline().parameters.P_ORG_NAME}' AND\n\tdm.sink_schema = '@{pipeline().parameters.P_SCHEMA}'\n\tAND (dm.mapping_complete IS NULL OR dm.mapping_complete = 0)\n\tAND ISJSON(dm.masked_status) = 1\n\tAND kc.[key] = rs.filter_alias\n\tAND kc.[value] = 'false'\n\tAND (\n\t\t(filter_alias = 'default' AND  \n\t\t\tidentified_table IN (\n\t\t\t\tSELECT DISTINCT\n\t\t\t\t\tidentified_table\n\t\t\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d\n\t\t\t\tCROSS APPLY OPENJSON(d.assigned_algorithm) kc\n\t\t\tWHERE\n\t\t\t\tISJSON(assigned_algorithm,ARRAY) = 1\n\t\t\t\tAND JSON_VALUE(kc.value, '$.alias') = 'default'\n\t\t\t)\n\t\t)\n\t\tOR\n\t\t(filter_alias != 'default')\n\t)\n",
+                                    "value": "WITH\ntables_requiring_filters AS\n(\n\tSELECT DISTINCT\n\t\tdataset, specified_database, specified_schema, identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\n\tWHERE ISJSON(assigned_algorithm) = 1\n\tAND dataset = '@{variables('DATASET')}'\n\tAND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND specified_schema = '@{pipeline().parameters.P_ORG_NAME}'\n),\ntables_not_requiring_filters AS\n(\n\tSELECT DISTINCT\n\t\tdataset, specified_database, specified_schema, identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\n\tWHERE assigned_algorithm IS NOT NULL\n\tAND assigned_algorithm != ''\n\tAND dataset = '@{variables('DATASET')}'\n\tAND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND specified_schema = '@{pipeline().parameters.P_ORG_NAME}'\n\tEXCEPT\n\tSELECT dataset, specified_database, specified_schema, identified_table\n\tFROM tables_requiring_filters\n\tWHERE dataset = '@{variables('DATASET')}'\n\tAND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND specified_schema = '@{pipeline().parameters.P_ORG_NAME}'\n),\nall_filters AS\n(\n\tSELECT DISTINCT\n\t\tJSON_VALUE(kc.value, '$.alias') as filter_alias,\n\t\treplace(JSON_VALUE(kc.value, '$.condition'), '@{variables('CONDITIONAL_MASKING_RESERVED_CHARACTER')}', concat('byName(''', d.identified_column, ''') ')) as filter_value,\n\t\td.identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d \n\t\tCROSS APPLY OPENJSON(d.assigned_algorithm) kc\n\tWHERE\n\t\tISJSON(assigned_algorithm,ARRAY) = 1\n\t\tAND\n\t\td.identified_table in (\n\t\t\tSELECT identified_table FROM tables_requiring_filters\n\t\t)\n\t\tAND JSON_VALUE(kc.value,'$.alias') != 'default'\n),\ndefault_filters AS\n(\n\tSELECT DISTINCT\n\t\t'default' as filter_alias,\n\t\tSTRING_AGG(concat('not(', replace(JSON_VALUE(kc.value, '$.condition'), '@{variables('CONDITIONAL_MASKING_RESERVED_CHARACTER')}', concat('byName(''', d.identified_column, ''')')),')'), ' && ') as filter_value,\n\t\td.identified_table\n\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d \n\t\tCROSS APPLY OPENJSON(d.assigned_algorithm) kc\n\tWHERE\n\t\tISJSON(assigned_algorithm,ARRAY) = 1\n\t\tAND\n\t\td.identified_table in (\n\t\t\tSELECT identified_table FROM tables_requiring_filters\n\t\t)\n\t\tAND JSON_VALUE(kc.value,'$.alias') != 'default'\n\tGROUP BY d.identified_table\n),\nsources_and_filters AS (\n\tSELECT\n\t\tt.dataset,\n\t\tt.specified_database,\n\t\tt.specified_schema,\n\t\tt.identified_table,\n\t\tf.filter_alias,\n\t\tf.filter_value\n\tFROM tables_requiring_filters t JOIN default_filters f\n\tON t.identified_table = f.identified_table\n\tUNION\n\tSELECT\n\t\tt.dataset,\n\t\tt.specified_database,\n\t\tt.specified_schema,\n\t\tt.identified_table,\n\t\tf.filter_alias,\n\t\tf.filter_value\n\tFROM tables_requiring_filters t JOIN all_filters f\n\tON t.identified_table = f.identified_table\n\tUNION\n\tSELECT\n\t\tdataset,\n\t\tspecified_database,\n\t\tspecified_schema,\n\t\tidentified_table,\n\t\t'',\n\t\t''\n\tFROM tables_not_requiring_filters\n)\nSELECT DISTINCT\n\tdm.source_dataset,\n\tdm.source_database,\n\tdm.source_schema,\n\tdm.source_table,\n\tdm.sink_dataset,\n\tdm.sink_database,\n\tdm.sink_schema,\n\tdm.sink_table,\n\trs.filter_alias,\n\trs.filter_value\nFROM\n\tsources_and_filters rs\n\tJOIN @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')} dm\n\tON (\n\t\trs.dataset = dm.source_dataset AND\n\t\trs.specified_database = dm.source_database AND\n\t\trs.specified_schema = dm.source_schema AND\n\t\trs.identified_table = dm.source_table\n\t)\nWHERE\n\tdm.sink_database = '@{pipeline().parameters.P_ORG_NAME}' AND\n\tdm.sink_schema = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND (dm.mapping_complete IS NULL OR dm.mapping_complete = 0)\n\tAND (ISJSON(dm.masked_status) = 0  OR dm.masked_status IS NULL)\nUNION\nSELECT DISTINCT\n\tdm.source_dataset,\n\tdm.source_database,\n\tdm.source_schema,\n\tdm.source_table,\n\tdm.sink_dataset,\n\tdm.sink_database,\n\tdm.sink_schema,\n\tdm.sink_table,\n\trs.filter_alias,\n\trs.filter_value\nFROM\n\tsources_and_filters rs\n\tJOIN @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')} dm\n\tCROSS APPLY OPENJSON(dm.masked_status) kc\n\tON (\n\t\trs.dataset = dm.source_dataset AND\n\t\trs.specified_database = dm.source_database AND\n\t\trs.specified_schema = dm.source_schema AND\n\t\trs.identified_table = dm.source_table\n\t)\nWHERE\n\tdm.sink_database = '@{pipeline().parameters.P_ORG_NAME}' AND\n\tdm.sink_schema = '@{pipeline().parameters.P_ORG_NAME}'\n\tAND (dm.mapping_complete IS NULL OR dm.mapping_complete = 0)\n\tAND ISJSON(dm.masked_status) = 1\n\tAND kc.[key] = rs.filter_alias\n\tAND kc.[value] = 'false'\n\tAND (\n\t\t(filter_alias = 'default' AND  \n\t\t\tidentified_table IN (\n\t\t\t\tSELECT DISTINCT\n\t\t\t\t\tidentified_table\n\t\t\tFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d\n\t\t\t\tCROSS APPLY OPENJSON(d.assigned_algorithm) kc\n\t\t\tWHERE\n\t\t\t\tISJSON(assigned_algorithm,ARRAY) = 1\n\t\t\t\tAND JSON_VALUE(kc.value, '$.alias') = 'default'\n\t\t\t)\n\t\t)\n\t\tOR\n\t\t(filter_alias != 'default')\n\t)\n",
                                     "type": "Expression"
                                 },
                                 "queryTimeout": "02:00:00",
@@ -157,18 +154,13 @@
                                                             "DF_DATASET": {
                                                                 "value": "'@{variables('DATASET')}'",
                                                                 "type": "Expression"
-                                                            },
-                                                            "METADATA_REMOVED_COLUMNS_TABLE": {
-                                                                "value": "'@{variables('METADATA_EVENTS_LOG_TABLE')}'",
-                                                                "type": "Expression"
                                                             }
                                                         },
                                                         "datasetParameters": {
                                                             "Ruleset": {},
                                                             "TypeMapping": {},
                                                             "MaskingParameterOutput": {}
-                                                        },
-                                                        "linkedServiceParameters": {}
+                                                        }
                                                     },
                                                     "staging": {},
                                                     "compute": {
@@ -302,7 +294,7 @@
                                                         "linkedServiceParameters": {
                                                             "Source": {
                                                                 "linkedService": {
-                                                                    "ORG_NAME": {
+                                                                    "LS_ORG_NAME": {
                                                                         "value": "@pipeline().parameters.P_ORG_NAME",
                                                                         "type": "Expression"
                                                                     }
@@ -310,7 +302,7 @@
                                                             },
                                                             "Sink": {
                                                                 "linkedService": {
-                                                                    "SINK_ORG_NAME": {
+                                                                    "LS_ORG_NAME": {
                                                                         "value": "@pipeline().parameters.P_ORG_NAME",
                                                                         "type": "Expression"
                                                                     }
@@ -319,9 +311,9 @@
                                                         }
                                                     },
                                                     "staging": {},
-                                                    "compute": {
-                                                        "coreCount": 8,
-                                                        "computeType": "General"
+                                                    "integrationRuntime": {
+                                                        "referenceName": "DCSMaskingRuntime",
+                                                        "type": "IntegrationRuntimeReference"
                                                     },
                                                     "traceLevel": "None",
                                                     "cacheSinks": {
@@ -436,7 +428,7 @@
                                                         },
                                                         "sink_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -468,7 +460,7 @@
                                                         },
                                                         "source_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -597,7 +589,7 @@
                                                         },
                                                         "sink_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -629,7 +621,7 @@
                                                         },
                                                         "source_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -724,18 +716,13 @@
                                                             "DF_DATASET": {
                                                                 "value": "'@{item().source_dataset}'",
                                                                 "type": "Expression"
-                                                            },
-                                                            "METADATA_REMOVED_COLUMNS_TABLE": {
-                                                                "value": "'@{variables('METADATA_EVENTS_LOG_TABLE')}'",
-                                                                "type": "Expression"
                                                             }
                                                         },
                                                         "datasetParameters": {
                                                             "Ruleset": {},
                                                             "TypeMapping": {},
                                                             "MaskingParameterOutput": {}
-                                                        },
-                                                        "linkedServiceParameters": {}
+                                                        }
                                                     },
                                                     "staging": {},
                                                     "compute": {
@@ -873,7 +860,7 @@
                                                         "linkedServiceParameters": {
                                                             "Source": {
                                                                 "linkedService": {
-                                                                    "ORG_NAME": {
+                                                                    "LS_ORG_NAME": {
                                                                         "value": "@pipeline().parameters.P_ORG_NAME",
                                                                         "type": "Expression"
                                                                     }
@@ -881,7 +868,7 @@
                                                             },
                                                             "Sink": {
                                                                 "linkedService": {
-                                                                    "SINK_ORG_NAME": {
+                                                                    "LS_ORG_NAME": {
                                                                         "value": "@pipeline().parameters.P_ORG_NAME",
                                                                         "type": "Expression"
                                                                     }
@@ -890,9 +877,9 @@
                                                         }
                                                     },
                                                     "staging": {},
-                                                    "compute": {
-                                                        "coreCount": 8,
-                                                        "computeType": "General"
+                                                    "integrationRuntime": {
+                                                        "referenceName": "DCSMaskingRuntime",
+                                                        "type": "IntegrationRuntimeReference"
                                                     },
                                                     "traceLevel": "Fine"
                                                 }
@@ -1010,7 +997,7 @@
                                                         },
                                                         "sink_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -1042,7 +1029,7 @@
                                                         },
                                                         "source_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -1177,7 +1164,7 @@
                                                         },
                                                         "sink_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -1209,7 +1196,7 @@
                                                         },
                                                         "source_schema": {
                                                             "value": {
-                                                                "value": "@pipeline().parameters.P_SCHEMA",
+                                                                "value": "@pipeline().parameters.P_ORG_NAME",
                                                                 "type": "Expression"
                                                             },
                                                             "type": "String"
@@ -1287,7 +1274,7 @@
                                             {
                                                 "type": "Query",
                                                 "text": {
-                                                    "value": "UPDATE\n    @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')}\nSET\n    mapping_complete = CAST(0 AS BIT),\n    masked_status = NULL\nWHERE\n    UPPER(source_dataset) = UPPER('@{variables('DATASET')}')\n    AND UPPER(source_database) = UPPER('@{pipeline().parameters.P_ORG_NAME}')\n    AND UPPER(source_schema) = UPPER('@{pipeline().parameters.P_SCHEMA}')",
+                                                    "value": "UPDATE\n    @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')}\nSET\n    mapping_complete = CAST(0 AS BIT),\n    masked_status = NULL\nWHERE\n    UPPER(source_dataset) = UPPER('@{variables('DATASET')}')\n    AND UPPER(source_database) = UPPER('@{pipeline().parameters.P_ORG_NAME}')\n    AND UPPER(source_schema) = UPPER('@{pipeline().parameters.P_ORG_NAME}')",
                                                     "type": "Expression"
                                                 }
                                             }
@@ -1327,7 +1314,7 @@
                                 {
                                     "type": "Query",
                                     "text": {
-                                        "value": "WITH\n    tables_requiring_filters AS (\n        SELECT DISTINCT\n            dataset, specified_database, specified_schema, identified_table\n        FROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\n        WHERE ISJSON(assigned_algorithm) = 1\n            AND dataset = '@{variables('DATASET')}'\n            AND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n            AND specified_schema = '@{pipeline().parameters.P_SCHEMA}'\n    ), all_filters AS (\n        SELECT DISTINCT\n            JSON_VALUE(kc.value, '$.alias') as filter_alias,\n            identified_table\n        FROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d\n            CROSS APPLY OPENJSON(d.assigned_algorithm) kc\n        WHERE\n            ISJSON(d.assigned_algorithm,ARRAY) = 1\n            AND\n            d.identified_table in (\n                SELECT identified_table FROM tables_requiring_filters\n            )\n    ), sources_and_filters AS (\n        SELECT\n            dataset,\n            specified_database,\n            specified_schema,\n            tables_requiring_filters.identified_table,\n            JSON_OBJECTAGG(filter_alias:CAST(0 as BIT)) AS masked_status\n        FROM tables_requiring_filters\n            INNER JOIN all_filters\n            ON tables_requiring_filters.identified_table = all_filters.identified_table\n        GROUP BY dataset, specified_database, specified_schema, tables_requiring_filters.identified_table\n    )\n    UPDATE @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')}\n    SET masked_status = sf.masked_status\n    FROM sources_and_filters sf\n    INNER JOIN @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')} dm ON\n        dm.source_dataset = sf.dataset AND\n        dm.source_database = sf.specified_database AND\n        dm.source_schema = sf.specified_schema AND\n        dm.source_table = sf.identified_table\n    WHERE\n        dm.masked_status IS NULL\n        AND (dm.mapping_complete IS NULL OR dm.mapping_complete = 0)\n",
+                                        "value": "WITH\n    tables_requiring_filters AS (\n        SELECT DISTINCT\n            dataset, specified_database, specified_schema, identified_table\n        FROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\n        WHERE ISJSON(assigned_algorithm) = 1\n            AND dataset = '@{variables('DATASET')}'\n            AND specified_database = '@{pipeline().parameters.P_ORG_NAME}'\n            AND specified_schema = '@{pipeline().parameters.P_ORG_NAME}'\n    ), all_filters AS (\n        SELECT DISTINCT\n            JSON_VALUE(kc.value, '$.alias') as filter_alias,\n            identified_table\n        FROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')} d\n            CROSS APPLY OPENJSON(d.assigned_algorithm) kc\n        WHERE\n            ISJSON(d.assigned_algorithm,ARRAY) = 1\n            AND\n            d.identified_table in (\n                SELECT identified_table FROM tables_requiring_filters\n            )\n    ), sources_and_filters AS (\n        SELECT\n            dataset,\n            specified_database,\n            specified_schema,\n            tables_requiring_filters.identified_table,\n            JSON_OBJECTAGG(filter_alias:CAST(0 as BIT)) AS masked_status\n        FROM tables_requiring_filters\n            INNER JOIN all_filters\n            ON tables_requiring_filters.identified_table = all_filters.identified_table\n        GROUP BY dataset, specified_database, specified_schema, tables_requiring_filters.identified_table\n    )\n    UPDATE @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')}\n    SET masked_status = sf.masked_status\n    FROM sources_and_filters sf\n    INNER JOIN @{variables('METADATA_SCHEMA')}.@{variables('METADATA_SOURCE_TO_SINK_MAPPING_TABLE')} dm ON\n        dm.source_dataset = sf.dataset AND\n        dm.source_database = sf.specified_database AND\n        dm.source_schema = sf.specified_schema AND\n        dm.source_table = sf.identified_table\n    WHERE\n        dm.masked_status IS NULL\n        AND (dm.mapping_complete IS NULL OR dm.mapping_complete = 0)\n",
                                         "type": "Expression"
                                     }
                                 }
@@ -1345,9 +1332,6 @@
                         "defaultValue": true
                     },
                     "P_ORG_NAME": {
-                        "type": "string"
-                    },
-                    "P_SCHEMA": {
                         "type": "string"
                     },
                     "P_REAPPLY_MAPPING": {
@@ -1390,7 +1374,7 @@
                     },
                     "TARGET_BATCH_SIZE": {
                         "type": "Integer",
-                        "defaultValue": 2000
+                        "defaultValue": 4000
                     },
                     "METADATA_EVENTS_LOG_TABLE": {
                         "type": "String",
@@ -1401,7 +1385,7 @@
                     "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "annotations": [],
-                "lastPublishTime": "2025-05-28T09:41:39Z"
+                "lastPublishTime": "2025-06-17T10:11:18Z"
             },
             "dependsOn": [
                 "[concat(variables('factoryId'), '/datasets/dcsazure_Dynamics365_to_Dynamics365_mask_metadata_ds')]",
@@ -1429,7 +1413,7 @@
                     }
                 },
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "annotations": [],
                 "type": "AzureSqlTable",
@@ -1453,7 +1437,7 @@
             "apiVersion": "2018-06-01",
             "properties": {
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "type": "MappingDataFlow",
                 "typeProperties": {
@@ -1582,27 +1566,30 @@
                             "description": "Perform an inner join on output_row with the computed casting parameters and date format headers - combining all masking parameters into the same output stream"
                         },
                         {
-                            "name": "IncludeColumnsToRemove"
-                        },
-                        {
-                            "name": "FilterToSpecificTable"
+                            "name": "FilterToExcludedColumns"
                         },
                         {
                             "name": "GroupColumnsToRemove"
+                        },
+                        {
+                            "name": "RemovedColumnsHandling",
+                            "description": "Creating the column output_row"
+                        },
+                        {
+                            "name": "IncludeColumnsToRemove"
                         }
                     ],
                     "scriptLines": [
                         "parameters{",
                         "     runId as string (''),",
-                        "     DF_METADATA_SCHEMA as string (''),",
-                        "     DF_METADATA_RULESET_TABLE as string (''),",
-                        "     DF_METADATA_ADF_TYPE_MAPPING_TABLE as string (''),",
-                        "     DF_SOURCE_DB as string (''),",
-                        "     DF_SOURCE_SCHEMA as string (''),",
-                        "     DF_SOURCE_TABLE as string (''),",
+                        "     DF_METADATA_SCHEMA as string ('dbo'),",
+                        "     DF_METADATA_RULESET_TABLE as string ('discovered_ruleset'),",
+                        "     DF_METADATA_ADF_TYPE_MAPPING_TABLE as string ('adf_type_mapping'),",
+                        "     DF_SOURCE_DB as string ('org8001e55a'),",
+                        "     DF_SOURCE_SCHEMA as string ('org8001e55a'),",
+                        "     DF_SOURCE_TABLE as string ('account'),",
                         "     DF_COLUMN_WIDTH_ESTIMATE as integer (1000),",
-                        "     DF_DATASET as string (''),",
-                        "     METADATA_REMOVED_COLUMNS_TABLE as string ('')",
+                        "     DF_DATASET as string ('DATAVERSE')",
                         "}",
                         "source(output(",
                         "          dataset as string,",
@@ -1659,8 +1646,7 @@
                         "RulesetWithTypes derive(output_row = 1,",
                         "          adf_type_conversion = concat(identified_column, ' as ', adf_type),",
                         "          column_width_estimate = iif(identified_column_max_length > 0, identified_column_max_length+4, $DF_COLUMN_WIDTH_ESTIMATE)) ~> RulesetWithAlgorithmTypeMapping",
-                        "RulesetWithAlgorithmTypeMapping aggregate(groupBy(output_row,",
-                        "          identified_table),",
+                        "RulesetWithAlgorithmTypeMapping aggregate(groupBy(output_row),",
                         "     FieldAlgorithmAssignments = regexReplace(reduce(mapAssociation(keyValues(collect(concat('x',hex(encode(identified_column)))), collect(assigned_algorithm)), '\"' + #key + '\":\"' + #value + '\"'), '{', #acc + #item + ',', #result + '}'), ',}', '}'),",
                         "          ColumnsToMask = regexReplace(reduce(collect(identified_column), '[',  #acc + '\"' + #item + '\",', #result + ']'), ',]', ']'),",
                         "          DataFactoryTypeMapping = concat(\"'\", '(timestamp as date, status as string, message as string, trace_id as string, items as (DELPHIX_COMPLIANCE_SERVICE_BATCH_ID as long, ',",
@@ -1752,16 +1738,18 @@
                         "     matchType:'exact',",
                         "     ignoreSpaces: false,",
                         "     broadcast: 'auto')~> AllMaskingParameters",
-                        "AllMaskingParameters, GroupColumnsToRemove lookup(GenerateMaskParameters@identified_table == GroupColumnsToRemove@identified_table,",
-                        "     multiple: false,",
-                        "     pickup: 'any',",
-                        "     broadcast: 'auto')~> IncludeColumnsToRemove",
                         "Ruleset filter(equalsIgnoreCase(dataset, $DF_DATASET) \r",
                         "&& equalsIgnoreCase(specified_database, $DF_SOURCE_DB)\r",
                         "&& equalsIgnoreCase(identified_table, $DF_SOURCE_TABLE)\r",
-                        "&& is_excluded == true()) ~> FilterToSpecificTable",
-                        "FilterToSpecificTable aggregate(groupBy(identified_table),",
+                        "&& is_excluded == true()) ~> FilterToExcludedColumns",
+                        "RemovedColumnsHandling aggregate(groupBy(output_row),",
                         "     Columns_to_remove = regexReplace(reduce(collect(identified_column), '[',  #acc + '\"' + #item + '\",', #result + ']'), ',]', ']')) ~> GroupColumnsToRemove",
+                        "FilterToExcludedColumns derive(output_row = 1) ~> RemovedColumnsHandling",
+                        "AllMaskingParameters, GroupColumnsToRemove join(GenerateMaskParameters@output_row == GroupColumnsToRemove@output_row,",
+                        "     joinType:'inner',",
+                        "     matchType:'exact',",
+                        "     ignoreSpaces: false,",
+                        "     broadcast: 'auto')~> IncludeColumnsToRemove",
                         "IncludeColumnsToRemove sink(validateSchema: false,",
                         "     skipDuplicateMapInputs: true,",
                         "     skipDuplicateMapOutputs: true,",
@@ -1780,7 +1768,7 @@
             "apiVersion": "2018-06-01",
             "properties": {
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "type": "MappingDataFlow",
                 "typeProperties": {
@@ -1797,7 +1785,7 @@
                     "sinks": [
                         {
                             "linkedService": {
-                                "referenceName": "[parameters('DCS_365_LS_Target')]",
+                                "referenceName": "[parameters('DCS_D365_LS')]",
                                 "type": "LinkedServiceReference"
                             },
                             "name": "Sink",
@@ -1808,7 +1796,7 @@
                         {
                             "name": "DCSForAzureAPI",
                             "linkedService": {
-                                "referenceName": "[parameters('RestService1')]",
+                                "referenceName": "[parameters('DCSMaskingLS')]",
                                 "type": "LinkedServiceReference"
                             }
                         },
@@ -1853,7 +1841,7 @@
                             "description": "For columns that need to be cast back to a compatible type, cast them back"
                         },
                         {
-                            "name": "removeColumns",
+                            "name": "RemoveColumns",
                             "description": "Remove columns that are not required for mapping"
                         },
                         {
@@ -2199,7 +2187,7 @@
                         "     requestFormat: ['type' -> 'json'],",
                         "     responseFormat: ['type' -> 'json', 'documentForm' -> 'documentPerLine'],",
                         "     columnTypeMap: ['body'->'$DF_BODY_TYPE_MAPPING']) ~> DCSForAzureAPI",
-                        "removeColumns derive(DELPHIX_COMPLIANCE_SERVICE_SORT_ID = sha2(256, columns())) ~> AddSortKey",
+                        "RemoveColumns derive(DELPHIX_COMPLIANCE_SERVICE_SORT_ID = sha2(256, columns())) ~> AddSortKey",
                         "AddSortKey sort(asc(DELPHIX_COMPLIANCE_SERVICE_SORT_ID, false)) ~> SortBySortKey",
                         "SortBySortKey keyGenerate(output(DELPHIX_COMPLIANCE_SERVICE_BATCH_ID as long),",
                         "     startAt: 1L,",
@@ -2231,7 +2219,7 @@
                         "          each(match(!contains($Columns_to_Remove,#item==name)))",
                         "     ),",
                         "     skipDuplicateMapInputs: true,",
-                        "     skipDuplicateMapOutputs: true) ~> removeColumns",
+                        "     skipDuplicateMapOutputs: true) ~> RemoveColumns",
                         "CreateSurrogateKey select(mapColumn(",
                         "          each(match(!contains($Columns_to_Remove,#item==name)&&!contains($DF_COLUMNS_TO_MASK,#item==name)))",
                         "     ),",
@@ -2270,7 +2258,7 @@
             "properties": {
                 "description": "Generate masking parameters when conditional algorithms are defined",
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "type": "MappingDataFlow",
                 "typeProperties": {
@@ -2448,13 +2436,16 @@
                             "description": "For all casting parameters that are currently null, set them instead to the empty list"
                         },
                         {
-                            "name": "IncludeColumnsToRemove"
-                        },
-                        {
-                            "name": "FilterToSpecificTable"
+                            "name": "FilterToExcludedColumns"
                         },
                         {
                             "name": "GroupColumnsToRemove"
+                        },
+                        {
+                            "name": "RemovedColumnsHandling"
+                        },
+                        {
+                            "name": "IncludeColumnsToRemove"
                         }
                     ],
                     "scriptLines": [
@@ -2468,8 +2459,7 @@
                         "     DF_SOURCE_TABLE as string (''),",
                         "     DF_COLUMN_WIDTH_ESTIMATE as integer (1000),",
                         "     DF_FILTER_KEY as string (''),",
-                        "     DF_DATASET as string (''),",
-                        "     METADATA_REMOVED_COLUMNS_TABLE as string ('')",
+                        "     DF_DATASET as string ('')",
                         "}",
                         "source(output(",
                         "          dataset as string,",
@@ -2526,8 +2516,7 @@
                         "RulesetWithTypes derive(output_row = 1,",
                         "          adf_type_conversion = concat(identified_column, ' as ', adf_type),",
                         "          column_width_estimate = iif(identified_column_max_length > 0, identified_column_max_length+4, $DF_COLUMN_WIDTH_ESTIMATE)) ~> RulesetWithAlgorithmTypeMapping",
-                        "RulesetWithAlgorithmTypeMapping aggregate(groupBy(output_row,",
-                        "          identified_table),",
+                        "RulesetWithAlgorithmTypeMapping aggregate(groupBy(output_row),",
                         "     FieldAlgorithmAssignments = regexReplace(reduce(mapAssociation(keyValues(collect(concat('x',hex(encode(identified_column)))), collect(assigned_algorithm)), '\"' + #key + '\":\"' + #value + '\"'), '{', #acc + #item + ',', #result + '}'), ',}', '}'),",
                         "          ColumnsToMask = regexReplace(reduce(collect(identified_column), '[',  #acc + '\"' + #item + '\",', #result + ']'), ',]', ']'),",
                         "          DataFactoryTypeMapping = concat(\"'\", '(timestamp as date, status as string, message as string, trace_id as string, items as (DELPHIX_COMPLIANCE_SERVICE_BATCH_ID as long, ',",
@@ -2726,16 +2715,18 @@
                         "     ignoreSpaces: false,",
                         "     broadcast: 'auto')~> JoinDateFormatAndStringCastingParameters",
                         "RemoveUnnecessaryColumns derive(each(match(startsWith(name,'ColumnsToCast')), $$ = coalesce($$, '[]'))) ~> ComputeCastingDefaultsIfMissing",
-                        "AllMaskingParameters, GroupColumnsToRemove lookup(GenerateMaskParameters@identified_table == GroupColumnsToRemove@identified_table,",
-                        "     multiple: false,",
-                        "     pickup: 'any',",
-                        "     broadcast: 'auto')~> IncludeColumnsToRemove",
                         "Ruleset filter(equalsIgnoreCase(dataset, $DF_DATASET) \r",
                         "&& equalsIgnoreCase(specified_database, $DF_SOURCE_DATABASE)\r",
                         "&& equalsIgnoreCase(identified_table, $DF_SOURCE_TABLE)\r",
-                        "&& is_excluded == true()) ~> FilterToSpecificTable",
-                        "FilterToSpecificTable aggregate(groupBy(identified_table),",
+                        "&& is_excluded == true()) ~> FilterToExcludedColumns",
+                        "RemovedColumnsHandling aggregate(groupBy(output_row),",
                         "     Columns_to_remove = regexReplace(reduce(collect(identified_column), '[',  #acc + '\"' + #item + '\",', #result + ']'), ',]', ']')) ~> GroupColumnsToRemove",
+                        "FilterToExcludedColumns derive(output_row = 1) ~> RemovedColumnsHandling",
+                        "AllMaskingParameters, GroupColumnsToRemove join(GenerateMaskParameters@output_row == GroupColumnsToRemove@output_row,",
+                        "     joinType:'inner',",
+                        "     matchType:'exact',",
+                        "     ignoreSpaces: false,",
+                        "     broadcast: 'auto')~> IncludeColumnsToRemove",
                         "IncludeColumnsToRemove sink(validateSchema: false,",
                         "     skipDuplicateMapInputs: true,",
                         "     skipDuplicateMapOutputs: true,",
@@ -2754,7 +2745,7 @@
             "apiVersion": "2018-06-01",
             "properties": {
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "type": "MappingDataFlow",
                 "typeProperties": {
@@ -2771,7 +2762,7 @@
                     "sinks": [
                         {
                             "linkedService": {
-                                "referenceName": "[parameters('DCS_365_LS_Target')]",
+                                "referenceName": "[parameters('DCS_D365_LS')]",
                                 "type": "LinkedServiceReference"
                             },
                             "name": "Sink",
@@ -2782,7 +2773,7 @@
                         {
                             "name": "DCSForAzureAPI",
                             "linkedService": {
-                                "referenceName": "[parameters('RestService1')]",
+                                "referenceName": "[parameters('DCSMaskingLS')]",
                                 "type": "LinkedServiceReference"
                             }
                         },
@@ -2846,7 +2837,7 @@
                             "name": "AlterRowCondition"
                         },
                         {
-                            "name": "removeColumns",
+                            "name": "RemoveColumns",
                             "description": "Remove columns that are not required for mapping"
                         }
                     ],
@@ -2908,7 +2899,7 @@
                         "     requestFormat: ['type' -> 'json'],",
                         "     responseFormat: ['type' -> 'json', 'documentForm' -> 'documentPerLine'],",
                         "     columnTypeMap: ['body'->'$DF_BODY_TYPE_MAPPING']) ~> DCSForAzureAPI",
-                        "removeColumns derive(DELPHIX_COMPLIANCE_SERVICE_SORT_ID = sha2(256, columns())) ~> AddSortKey",
+                        "RemoveColumns derive(DELPHIX_COMPLIANCE_SERVICE_SORT_ID = sha2(256, columns())) ~> AddSortKey",
                         "AddSortKey sort(asc(DELPHIX_COMPLIANCE_SERVICE_SORT_ID, false)) ~> SortBySortKey",
                         "SortBySortKey keyGenerate(output(DELPHIX_COMPLIANCE_SERVICE_BATCH_ID as long),",
                         "     startAt: 1L,",
@@ -2953,7 +2944,7 @@
                         "          each(match(!contains($Columns_to_Remove,#item==name)))",
                         "     ),",
                         "     skipDuplicateMapInputs: true,",
-                        "     skipDuplicateMapOutputs: true) ~> removeColumns",
+                        "     skipDuplicateMapOutputs: true) ~> RemoveColumns",
                         "AlterRowCondition sink(allowSchemaDrift: true,",
                         "     validateSchema: false,",
                         "     store: 'dynamics',",
@@ -2974,6 +2965,13 @@
                     ]
                 }
             },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/default')]",
+            "type": "Microsoft.DataFactory/factories/managedVirtualNetworks",
+            "apiVersion": "2018-06-01",
+            "properties": {},
             "dependsOn": []
         }
     ]

@@ -15,7 +15,7 @@
         "DCS_D365_LS": {
             "type": "string"
         },
-        "RestService1": {
+        "DCSDiscoveryLS": {
             "type": "string"
         }
     },
@@ -62,7 +62,7 @@
                                     "userProperties": [],
                                     "typeProperties": {
                                         "dataflow": {
-                                            "referenceName": "dcsazure_Dynamics365_to_Dynamics365_Fetch_Removed_Columns_df",
+                                            "referenceName": "dcsazure_Dynamics365_to_Dynamics365_import_columns_df",
                                             "type": "DataFlowReference",
                                             "parameters": {
                                                 "EntityName": {
@@ -86,7 +86,7 @@
                                                     "type": "Expression"
                                                 },
                                                 "SOURCE_SCHEMA": {
-                                                    "value": "'@{variables('METADATA_SCHEMA')}'",
+                                                    "value": "'@{pipeline().parameters.P_SOURCE_ORG_NAME}'",
                                                     "type": "Expression"
                                                 },
                                                 "METADATA_EVENTS_LOG": {
@@ -114,7 +114,7 @@
                                             "linkedServiceParameters": {
                                                 "Source": {
                                                     "linkedService": {
-                                                        "ORG_NAME": {
+                                                        "LS_ORG_NAME": {
                                                             "value": "@pipeline().parameters.P_SOURCE_ORG_NAME",
                                                             "type": "Expression"
                                                         }
@@ -169,7 +169,7 @@
                                             {
                                                 "type": "Query",
                                                 "text": {
-                                                    "value": "UPDATE @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\nSET discovery_complete = CAST(0 AS BIT)\nWHERE\n    dataset = '@{variables('DATASET')}'\n    AND UPPER(specified_database) = UPPER('@{pipeline().parameters.P_SOURCE_ORG_NAME}')\n    AND UPPER(specified_schema) = UPPER('@{pipeline().parameters.P_SOURCE_SCHEMA}')",
+                                                    "value": "UPDATE @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\nSET discovery_complete = CAST(0 AS BIT)\nWHERE\n    dataset = '@{variables('DATASET')}'\n    AND UPPER(specified_database) = UPPER('@{pipeline().parameters.P_SOURCE_ORG_NAME}')\n    AND UPPER(specified_schema) = UPPER('@{pipeline().parameters.P_SOURCE_ORG_NAME}')",
                                                     "type": "Expression"
                                                 }
                                             }
@@ -185,7 +185,7 @@
                         "type": "Lookup",
                         "dependsOn": [
                             {
-                                "activity": "Delete_temp_table_values",
+                                "activity": "Delete Temporary Table Records",
                                 "dependencyConditions": [
                                     "Succeeded"
                                 ]
@@ -203,7 +203,7 @@
                             "source": {
                                 "type": "AzureSqlSource",
                                 "sqlReaderQuery": {
-                                    "value": "SELECT DISTINCT\n    specified_database,\n    specified_schema,\n    identified_table  \nFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\nWHERE UPPER(specified_schema) = UPPER('@{pipeline().parameters.P_SOURCE_SCHEMA}')\nAND UPPER(specified_database) = UPPER('@{pipeline().parameters.P_SOURCE_ORG_NAME}')\nAND dataset = '@{variables('DATASET')}'\nAND (discovery_complete IS NULL OR discovery_complete = 0)\nORDER BY identified_table",
+                                    "value": "SELECT DISTINCT\n    specified_database,\n    specified_schema,\n    identified_table  \nFROM @{variables('METADATA_SCHEMA')}.@{variables('METADATA_RULESET_TABLE')}\nWHERE UPPER(specified_schema) = UPPER('@{pipeline().parameters.P_SOURCE_ORG_NAME}')\nAND UPPER(specified_database) = UPPER('@{pipeline().parameters.P_SOURCE_ORG_NAME}')\nAND dataset = '@{variables('DATASET')}'\nAND (discovery_complete IS NULL OR discovery_complete = 0)\nORDER BY identified_table",
                                     "type": "Expression"
                                 },
                                 "queryTimeout": "02:00:00",
@@ -267,7 +267,7 @@
                                                     "type": "Expression"
                                                 },
                                                 "DF_SOURCE_SCHEMA": {
-                                                    "value": "'@{pipeline().parameters.P_SOURCE_SCHEMA}'",
+                                                    "value": "'@{pipeline().parameters.P_SOURCE_ORG_NAME}'",
                                                     "type": "Expression"
                                                 },
                                                 "DF_SOURCE_TABLE": {
@@ -303,8 +303,8 @@
                                             "linkedServiceParameters": {
                                                 "Source1MillRowDataSampling": {
                                                     "linkedService": {
-                                                        "ORG_NAME": {
-                                                            "value": "@item().specified_database",
+                                                        "LS_ORG_NAME": {
+                                                            "value": "@pipeline().parameters.P_SOURCE_ORG_NAME",
                                                             "type": "Expression"
                                                         }
                                                     }
@@ -312,9 +312,9 @@
                                             }
                                         },
                                         "staging": {},
-                                        "compute": {
-                                            "coreCount": 8,
-                                            "computeType": "General"
+                                        "integrationRuntime": {
+                                            "referenceName": "DCSDiscoveryRuntime",
+                                            "type": "IntegrationRuntimeReference"
                                         },
                                         "traceLevel": "Fine"
                                     }
@@ -414,7 +414,7 @@
                                             },
                                             "source_schema": {
                                                 "value": {
-                                                    "value": "@pipeline().parameters.P_SOURCE_SCHEMA",
+                                                    "value": "@{pipeline().parameters.P_SOURCE_ORG_NAME}",
                                                     "type": "Expression"
                                                 },
                                                 "type": "String"
@@ -531,7 +531,7 @@
                                             },
                                             "source_schema": {
                                                 "value": {
-                                                    "value": "@pipeline().parameters.P_SOURCE_SCHEMA",
+                                                    "value": "@{pipeline().parameters.P_SOURCE_ORG_NAME}",
                                                     "type": "Expression"
                                                 },
                                                 "type": "String"
@@ -574,7 +574,7 @@
                         }
                     },
                     {
-                        "name": "Delete_temp_table_values",
+                        "name": "Delete Temporary Table Records",
                         "type": "Script",
                         "dependsOn": [
                             {
@@ -610,7 +610,7 @@
                         }
                     },
                     {
-                        "name": "Get tables from the source",
+                        "name": "Get tables from source",
                         "type": "Copy",
                         "dependsOn": [
                             {
@@ -656,7 +656,7 @@
                                     {
                                         "name": "specified_schema",
                                         "value": {
-                                            "value": "@pipeline().parameters.P_SOURCE_SCHEMA",
+                                            "value": "@{pipeline().parameters.P_SOURCE_ORG_NAME}",
                                             "type": "Expression"
                                         }
                                     },
@@ -780,7 +780,7 @@
                                 "type": "DatasetReference",
                                 "parameters": {
                                     "RELATIVE_URL": {
-                                        "value": "https://@{pipeline().parameters.P_SOURCE_ORG_NAME}.api.crm.dynamics.com/api/data/v9.0/EntityDefinitions?$select=LogicalName,DisplayName&$filter=\n    IsValidForAdvancedFind eq true and\n    IsCustomizable/Value eq true and\n    IsPrivate eq false and\n    TableType ne 'Elastic' and\n    IsLogicalEntity eq false and\n    IsIntersect eq false\n    and LogicalName ne 'aaduser'\n    and LogicalName ne 'asyncoperation'\n    and LogicalName ne 'annotation'",
+                                        "value": "EntityDefinitions?$select=LogicalName,DisplayName&$filter=\n    IsValidForAdvancedFind eq true and\n    IsCustomizable/Value eq true and\n    IsPrivate eq false and\n    TableType ne 'Elastic' and\n    IsLogicalEntity eq false and\n    IsIntersect eq false\n    and LogicalName ne 'aaduser'\n    and LogicalName ne 'asyncoperation'\n    and LogicalName ne 'annotation'",
                                         "type": "Expression"
                                     },
                                     "ORG_NAME": {
@@ -812,7 +812,7 @@
                         "type": "Lookup",
                         "dependsOn": [
                             {
-                                "activity": "Get tables from the source",
+                                "activity": "Get tables from source",
                                 "dependencyConditions": [
                                     "Succeeded"
                                 ]
@@ -845,7 +845,7 @@
                                         "type": "Expression"
                                     },
                                     "DS_METADATA_TABLE": {
-                                        "value": "@variables('METADATA_RULESET_TEMP_TABLE')",
+                                        "value": "@variables('METADATA_RULESET_TABLE')",
                                         "type": "Expression"
                                     }
                                 }
@@ -864,9 +864,6 @@
                     },
                     "P_SOURCE_ORG_NAME": {
                         "type": "string"
-                    },
-                    "P_SOURCE_SCHEMA": {
-                        "type": "string"
                     }
                 },
                 "variables": {
@@ -877,10 +874,6 @@
                     "DATASET": {
                         "type": "String",
                         "defaultValue": "DATAVERSE"
-                    },
-                    "METADATA_RULESET_TEMP_TABLE": {
-                        "type": "String",
-                        "defaultValue": "discovered_ruleset_temp"
                     },
                     "METADATA_EVENT_PROCEDURE_NAME": {
                         "type": "String",
@@ -903,12 +896,12 @@
                     "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "annotations": [],
-                "lastPublishTime": "2025-06-02T10:11:43Z"
+                "lastPublishTime": "2025-06-17T06:21:37Z"
             },
             "dependsOn": [
                 "[concat(variables('factoryId'), '/datasets/dcsazure_Dynamics365_to_Dynamics365_discovery_metadata_ds')]",
                 "[concat(variables('factoryId'), '/datasets/dcsazure_Dynamics365_to_Dynamics365_discovery_source_ds')]",
-                "[concat(variables('factoryId'), '/dataflows/dcsazure_Dynamics365_to_Dynamics365_Fetch_Removed_Columns_df')]",
+                "[concat(variables('factoryId'), '/dataflows/dcsazure_Dynamics365_to_Dynamics365_import_columns_df')]",
                 "[concat(variables('factoryId'), '/dataflows/dcsazure_Dynamics365_to_Dynamics365_discovery_df')]"
             ]
         },
@@ -931,7 +924,7 @@
                     }
                 },
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "annotations": [],
                 "type": "AzureSqlTable",
@@ -958,7 +951,7 @@
                     "referenceName": "[parameters('CRM_API_LS')]",
                     "type": "LinkedServiceReference",
                     "parameters": {
-                        "ORG_NAME": {
+                        "LS_ORG_NAME": {
                             "value": "@dataset().ORG_NAME",
                             "type": "Expression"
                         }
@@ -975,7 +968,7 @@
                     }
                 },
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "annotations": [],
                 "type": "RestResource",
@@ -990,12 +983,12 @@
             "dependsOn": []
         },
         {
-            "name": "[concat(parameters('factoryName'), '/dcsazure_Dynamics365_to_Dynamics365_Fetch_Removed_Columns_df')]",
+            "name": "[concat(parameters('factoryName'), '/dcsazure_Dynamics365_to_Dynamics365_import_columns_df')]",
             "type": "Microsoft.DataFactory/factories/dataflows",
             "apiVersion": "2018-06-01",
             "properties": {
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "type": "MappingDataFlow",
                 "typeProperties": {
@@ -1301,7 +1294,7 @@
             "properties": {
                 "description": "DCSAzure - AzureSQL to AzureSQL Discovery Dataflow",
                 "folder": {
-                    "name": "dcsazure_Dataverse_to_Dataverse"
+                    "name": "dcsazure_Dynamics365_to_Dynamics365"
                 },
                 "type": "MappingDataFlow",
                 "typeProperties": {
@@ -1337,7 +1330,7 @@
                         {
                             "name": "CallDCSForAzureDiscovery",
                             "linkedService": {
-                                "referenceName": "[parameters('RestService1')]",
+                                "referenceName": "[parameters('DCSDiscoveryLS')]",
                                 "type": "LinkedServiceReference"
                             }
                         },
@@ -1567,6 +1560,13 @@
                     ]
                 }
             },
+            "dependsOn": []
+        },
+        {
+            "name": "[concat(parameters('factoryName'), '/default')]",
+            "type": "Microsoft.DataFactory/factories/managedVirtualNetworks",
+            "apiVersion": "2018-06-01",
+            "properties": {},
             "dependsOn": []
         }
     ]
